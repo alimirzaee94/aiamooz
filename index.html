@@ -61,6 +61,7 @@
             --sidebar-width: 280px;
             --sidebar-collapsed-width: 72px;
             --mobile-breakpoint: 768px;
+            --input-area-height: 80px;
         }
 
         /* Dark Theme */
@@ -442,6 +443,7 @@
             padding: 0.5rem;
             border-radius: 8px;
             transition: all var(--transition-fast);
+            border-radius: 8px;
         }
 
         .menu-toggle:hover {
@@ -550,7 +552,7 @@
             position: relative;
         }
 
-        /* Chat Page Styles - Mobile First */
+        /* Chat Page Styles - Mobile First with Fixed Input */
         .chat-container {
             height: 100%;
             display: flex;
@@ -558,6 +560,13 @@
             max-width: 100%;
             margin: 0 auto;
             position: relative;
+        }
+
+        @media (max-width: 768px) {
+            .chat-container {
+                height: calc(100vh - var(--header-height));
+                padding-bottom: var(--input-area-height);
+            }
         }
 
         @media (min-width: 769px) {
@@ -732,6 +741,7 @@
 
         [data-theme="dark"] .message.assistant .message-bubble {
             background: var(--bg-tertiary);
+            color: var(--text-primary);
             border-color: var(--border-color);
         }
 
@@ -1036,11 +1046,24 @@
             }
         }
 
-        /* Input Area Style */
+        /* Input Area Style - Fixed on Mobile */
         .input-area {
             background: var(--bg-primary);
-            padding: 0.75rem;
             border-top: 1px solid var(--border-color);
+            padding: 0.75rem;
+        }
+
+        @media (max-width: 768px) {
+            .input-area {
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                z-index: 35;
+                box-shadow: var(--shadow-lg);
+                backdrop-filter: blur(10px);
+                -webkit-backdrop-filter: blur(10px);
+            }
         }
 
         @media (min-width: 769px) {
@@ -1600,6 +1623,12 @@
             transition: all var(--transition-base);
         }
 
+        @media (max-width: 768px) {
+            .connection-status {
+                bottom: calc(var(--input-area-height) + 1rem);
+            }
+        }
+
         .connection-status.connected {
             background: var(--success);
         }
@@ -1700,15 +1729,37 @@
     <div id="root"></div>
 
     <script type="text/babel">
+
         const { useState, useEffect, useRef, useCallback, useMemo, memo } = React;
 
         // Configuration - هماهنگ با بک‌اند
-        const API_BASE_URL = 'http://127.0.0.1:8002';
-        const WS_URL = 'ws://127.0.0.1:8002/ws';
+        const API_BASE_URL = 'http://65.109.189.168:5003';
+        //const WS_URL = 'ws://127.0.0.1:5003/ws';
         const STORAGE_PREFIX = 'ai_amooz_';
 
         // Utility Functions
         const generateId = () => `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        // User Session Management - فیکس شده
+        const getUserId = () => {
+            try {
+                let userId = localStorage.getItem(STORAGE_PREFIX + 'user_id');
+                if (!userId) {
+                    userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                    localStorage.setItem(STORAGE_PREFIX + 'user_id', userId);
+                    console.log('New user ID created:', userId);
+                }
+                return userId;
+            } catch {
+                // اگر localStorage دسترسی نداشت
+                return `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            }
+        };
+
+        const CURRENT_USER_ID = getUserId();
+        console.log('Current user ID:', CURRENT_USER_ID);
+
+        const WS_URL = `wss://edugpt.ir/ws?user_id=${CURRENT_USER_ID}`;
 
         const formatTime = (date) => {
             return new Intl.DateTimeFormat('fa-IR', {
@@ -1719,6 +1770,35 @@
 
         const formatNumber = (num) => {
             return new Intl.NumberFormat('fa-IR').format(num);
+        };
+
+        // فرمت کردن زمان پاسخ - فیکس شده
+        const formatResponseTime = (responseTime) => {
+            if (!responseTime) return '';
+
+            // اگر زمان پاسخ به فرمت ISO string باشد
+            if (typeof responseTime === 'string' && responseTime.includes('T')) {
+                // استخراج ثانیه‌ها از روی فرمت ISO
+                const timeMatch = responseTime.match(/T\d{2}:\d{2}:(\d+(?:\.\d+)?)/);
+                if (timeMatch) {
+                    const seconds = parseFloat(timeMatch[1]);
+                    return `${seconds.toFixed(1)} ثانیه`;
+                }
+                return responseTime;
+            }
+
+            // اگر عدد باشد
+            if (typeof responseTime === 'number') {
+                return `${responseTime.toFixed(1)} ثانیه`;
+            }
+
+            // تلاش برای تبدیل string به عدد
+            const numericTime = parseFloat(responseTime);
+            if (!isNaN(numericTime)) {
+                return `${numericTime.toFixed(1)} ثانیه`;
+            }
+
+            return responseTime;
         };
 
         // Safe localStorage wrapper
@@ -2154,7 +2234,7 @@
                                 {formatTime(new Date(message.timestamp))}
                             </div>
                             {message.metadata?.response_time && (
-                                <span>• {message.metadata.response_time}s</span>
+                                <span>• {formatResponseTime(message.metadata.response_time)}</span>
                             )}
                             {message.metadata?.quality_score && (
                                 <span>• کیفیت: {(message.metadata.quality_score * 100).toFixed(0)}%</span>
@@ -2166,176 +2246,211 @@
         });
 
         const ChatPage = ({ messages, setMessages, addNotification, wsStatus, sendWsMessage, lastMessage }) => {
-            const [inputMessage, setInputMessage] = useState('');
-            const [isTyping, setIsTyping] = useState(false);
+    const [inputMessage, setInputMessage] = useState('');
+    const [isTyping, setIsTyping] = useState(false);
 
-            const messagesEndRef = useRef(null);
-            const inputRef = useRef(null);
-            const { makeRequest, isLoading, error, setError } = useApi();
-            const lastMessageRef = useRef();
+    const messagesEndRef = useRef(null);
+    const inputRef = useRef(null);
+    const { makeRequest, isLoading, error, setError } = useApi();
+    const lastMessageRef = useRef(null);
+    const [conversationId, setConversationId] = useLocalStorage('conversation_id', null);
 
-            useEffect(() => {
-                if (inputRef.current) {
-                    inputRef.current.style.height = 'auto';
-                    inputRef.current.style.height = `${inputRef.current.scrollHeight}px`;
-                }
-            }, [inputMessage]);
+    // Log user info for debugging
+    console.log('[ChatPage] Current User ID:', CURRENT_USER_ID);
+    console.log('[ChatPage] Conversation ID:', conversationId);
 
-            // Handle WebSocket messages
-            useEffect(() => {
-                if (lastMessage && lastMessage.id !== lastMessageRef.current) {
-                    lastMessageRef.current = lastMessage.id;
+    useEffect(() => {
+        if (inputRef.current) {
+            inputRef.current.style.height = 'auto';
+            inputRef.current.style.height = `${inputRef.current.scrollHeight}px`;
+        }
+    }, [inputMessage]);
 
-                    if (lastMessage.type === 'response') {
-                        const assistantMessage = {
-                            id: generateId(),
-                            role: 'assistant',
-                            content: lastMessage.response,
-                            metadata: lastMessage.metadata,
-                            suggestions: lastMessage.suggestions,
-                            timestamp: new Date().toISOString()
-                        };
+    // Handle WebSocket messages
+    useEffect(() => {
+        if (lastMessage && lastMessage.id !== lastMessageRef.current) {
+            lastMessageRef.current = lastMessage.id;
 
-                        setMessages(prev => [...prev, assistantMessage]);
-                        setIsTyping(false);
+            console.log('[ChatPage] WebSocket message received:', lastMessage.type);
 
-                        if (lastMessage.metadata?.response_time) {
-                            addNotification('success', 'پاسخ دریافت شد',
-                                `در ${lastMessage.metadata.response_time} ثانیه پاسخ داده شد`);
-                        }
-                    } else if (lastMessage.type === 'error') {
-                        const errorMessage = {
-                            id: generateId(),
-                            role: 'assistant',
-                            content: 'متأسفانه در پردازش درخواست مشکلی پیش آمد. لطفاً دوباره تلاش کنید.',
-                            timestamp: new Date().toISOString()
-                        };
-                        setMessages(prev => [...prev, errorMessage]);
-                        setIsTyping(false);
-                        addNotification('error', 'خطا در پردازش', lastMessage.message);
-                    }
-                }
-            }, [lastMessage, setMessages, addNotification]);
-
-            const scrollToBottom = useCallback(() => {
-                messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-            }, []);
-
-            useEffect(() => {
-                scrollToBottom();
-            }, [messages, isTyping, scrollToBottom]);
-
-            const sendMessage = useCallback(async () => {
-                if (!inputMessage.trim() || isTyping) return;
-
-                const currentQuery = inputMessage.trim();
-                setInputMessage('');
-                setIsTyping(true);
-                setError(null);
-
-                const userMessage = {
+            if (lastMessage.type === 'response') {
+                const assistantMessage = {
                     id: generateId(),
-                    role: 'user',
-                    content: currentQuery,
+                    role: 'assistant',
+                    content: lastMessage.response,
+                    metadata: lastMessage.metadata,
+                    suggestions: lastMessage.suggestions,
                     timestamp: new Date().toISOString()
                 };
 
-                setMessages(prev => [...prev, userMessage]);
+                setMessages(prev => [...prev, assistantMessage]);
+                setIsTyping(false);
 
-                // Try WebSocket first
-                if (wsStatus === 'connected' && sendWsMessage({
-                    type: 'chat',
-                    query: currentQuery
-                })) {
-                    // Message sent via WebSocket
-                    return;
+                // Update conversation ID if provided
+                if (lastMessage.conversation_id) {
+                    console.log('[ChatPage] Updating conversation ID from WS:', lastMessage.conversation_id);
+                    setConversationId(lastMessage.conversation_id);
                 }
 
-                // Fallback to HTTP API
-                try {
-                    const response = await makeRequest('/chat', {
-                        method: 'POST',
-                        body: JSON.stringify({
-                            query: currentQuery,
-                            user_id: 'guest'
-                        })
-                    });
-
-                    const assistantMessage = {
-                        id: generateId(),
-                        role: 'assistant',
-                        content: response.response,
-                        suggestions: response.suggestions,
-                        metadata: response.metadata,
-                        timestamp: new Date().toISOString()
-                    };
-
-                    setMessages(prev => [...prev, assistantMessage]);
-
-                    if (response.metadata?.response_time) {
-                        addNotification('success', 'پاسخ دریافت شد',
-                            `در ${response.metadata.response_time.toFixed(2)} ثانیه پاسخ داده شد`);
-                    }
-
-                } catch (err) {
-                    console.error('Chat error:', err);
-
-                    const errorMessage = {
-                        id: generateId(),
-                        role: 'assistant',
-                        content: 'متأسفانه در ارسال پیام مشکلی پیش آمد. لطفاً دوباره تلاش کنید.',
-                        timestamp: new Date().toISOString()
-                    };
-
-                    setMessages(prev => [...prev, errorMessage]);
-                    addNotification('error', 'خطا در ارسال', 'لطفاً دوباره تلاش کنید');
-                } finally {
-                    setIsTyping(false);
+                if (lastMessage.metadata?.response_time) {
+                    addNotification('success', 'پاسخ دریافت شد',
+                        `در ${formatResponseTime(lastMessage.metadata.response_time)} پاسخ داده شد`);
                 }
-            }, [inputMessage, isTyping, makeRequest, addNotification, setError, setMessages, wsStatus, sendWsMessage]);
+            } else if (lastMessage.type === 'error') {
+                const errorMessage = {
+                    id: generateId(),
+                    role: 'assistant',
+                    content: 'متأسفانه در پردازش درخواست مشکلی پیش آمد. لطفاً دوباره تلاش کنید.',
+                    timestamp: new Date().toISOString()
+                };
+                setMessages(prev => [...prev, errorMessage]);
+                setIsTyping(false);
+                addNotification('error', 'خطا در پردازش', lastMessage.message);
+            }
+        }
+    }, [lastMessage, setMessages, addNotification, setConversationId]);
 
-            const handleAction = useCallback(async (messageId, action) => {
-                const messageIndex = messages.findIndex(m => m.id === messageId);
-                if (messageIndex === -1 || messageIndex === 0) return;
+    const scrollToBottom = useCallback(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, []);
 
-                const message = messages[messageIndex];
-                const previousMessage = messages[messageIndex - 1];
+    useEffect(() => {
+        scrollToBottom();
+    }, [messages, isTyping, scrollToBottom]);
 
-                if (previousMessage.role !== 'user') return;
+    const sendMessage = useCallback(async () => {
+        if (!inputMessage.trim() || isTyping) return;
 
-                setMessages(prev => prev.map(m =>
-                    m.id === messageId ? { ...m, feedback: action } : m
-                ));
+        const currentQuery = inputMessage.trim();
+        setInputMessage('');
+        setIsTyping(true);
+        setError(null);
 
-                // Send feedback to backend
-                try {
-                    await makeRequest('/feedback', {
-                        method: 'POST',
-                        body: JSON.stringify({
-                            query: previousMessage.content,
-                            response: message.content,
-                            rating: action === 'like' ? 5 : 2,
-                            user_id: 'guest'
-                        })
-                    });
+        console.log('[ChatPage] Sending message with:', {
+            query: currentQuery,
+            user_id: CURRENT_USER_ID,  // متغیر واقعی
+            conversation_id: conversationId
+        });
 
-                    addNotification('success', 'بازخورد ثبت شد', 'از نظر شما متشکریم');
-                } catch (err) {
-                    console.error('Feedback error:', err);
-                }
-            }, [messages, setMessages, makeRequest, addNotification]);
+        const userMessage = {
+            id: generateId(),
+            role: 'user',
+            content: currentQuery,
+            timestamp: new Date().toISOString()
+        };
 
-            const handleSuggestionClick = useCallback((suggestion) => {
-                setInputMessage(suggestion);
-                inputRef.current?.focus();
-            }, []);
+        setMessages(prev => [...prev, userMessage]);
 
-            const handleKeyPress = useCallback((e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
-                }
-            }, [sendMessage]);
+        // Try WebSocket first
+        if (wsStatus === 'connected' && sendWsMessage({
+            type: 'chat',
+            query: currentQuery,
+            user_id: CURRENT_USER_ID,  // متغیر واقعی
+            conversation_id: conversationId
+        })) {
+            console.log('[ChatPage] Message sent via WebSocket');
+            return;
+        }
+
+        // Fallback to HTTP API
+        try {
+            console.log('[ChatPage] Sending via HTTP API...');
+            const response = await makeRequest('/chat', {
+                method: 'POST',
+                body: JSON.stringify({
+                    query: currentQuery,
+                    user_id: CURRENT_USER_ID,  // اصلاح شده - متغیر واقعی به جای string
+                    conversation_id: conversationId
+                })
+            });
+
+            console.log('[ChatPage] HTTP Response received:', {
+                conversation_id: response.conversation_id,
+                has_metadata: !!response.metadata,
+                suggestions_count: response.suggestions?.length || 0
+            });
+
+            // Update conversation ID
+            if (response.conversation_id) {
+                setConversationId(response.conversation_id);
+            }
+
+            const assistantMessage = {
+                id: generateId(),
+                role: 'assistant',
+                content: response.response,
+                suggestions: response.suggestions,
+                metadata: response.metadata,
+                timestamp: new Date().toISOString()
+            };
+
+            setMessages(prev => [...prev, assistantMessage]);
+
+            if (response.metrics?.response_time) {
+                addNotification('success', 'پاسخ دریافت شد',
+                    `در ${formatResponseTime(response.metrics.response_time)} پاسخ داده شد`);
+            }
+
+        } catch (err) {
+            console.error('[ChatPage] Chat error:', err);
+
+            const errorMessage = {
+                id: generateId(),
+                role: 'assistant',
+                content: 'متأسفانه در ارسال پیام مشکلی پیش آمد. لطفاً دوباره تلاش کنید.',
+                timestamp: new Date().toISOString()
+            };
+
+            setMessages(prev => [...prev, errorMessage]);
+            addNotification('error', 'خطا در ارسال', 'لطفاً دوباره تلاش کنید');
+        } finally {
+            setIsTyping(false);
+        }
+    }, [inputMessage, isTyping, makeRequest, addNotification, setError, setMessages, wsStatus, sendWsMessage, conversationId, setConversationId]);
+
+    const handleAction = useCallback(async (messageId, action) => {
+        const messageIndex = messages.findIndex(m => m.id === messageId);
+        if (messageIndex === -1 || messageIndex === 0) return;
+
+        const message = messages[messageIndex];
+        const previousMessage = messages[messageIndex - 1];
+
+        if (previousMessage.role !== 'user') return;
+
+        setMessages(prev => prev.map(m =>
+            m.id === messageId ? { ...m, feedback: action } : m
+        ));
+
+        // Send feedback to backend
+        try {
+            console.log('[ChatPage] Sending feedback for user:', CURRENT_USER_ID);
+            await makeRequest('/feedback', {
+                method: 'POST',
+                body: JSON.stringify({
+                    query: previousMessage.content,
+                    response: message.content,
+                    rating: action === 'like' ? 5 : 2,
+                    user_id: CURRENT_USER_ID  // اصلاح شده - متغیر واقعی
+                })
+            });
+
+            addNotification('success', 'بازخورد ثبت شد', 'از نظر شما متشکریم');
+        } catch (err) {
+            console.error('[ChatPage] Feedback error:', err);
+        }
+    }, [messages, setMessages, makeRequest, addNotification]);
+
+    const handleSuggestionClick = useCallback((suggestion) => {
+        setInputMessage(suggestion);
+        inputRef.current?.focus();
+    }, []);
+
+    const handleKeyPress = useCallback((e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    }, [sendMessage]);
 
             return (
                 <>
@@ -2417,7 +2532,7 @@
                 },
                 {
                     icon: 'book-open',
-                    title: 'منابع دقیق',
+                    title: 'منابع منابع',
                     description: 'همه پاسخ‌ها بر اساس محتوای کتاب درسی با ذکر دقیق منابع و صفحات ارائه می‌شود.'
                 },
                 {
@@ -2538,7 +2653,7 @@
                                 <i className="stat-icon fas fa-clock"></i>
                             </div>
                             <div className="stat-value">
-                                {analytics?.system_metrics?.avg_response_time?.toFixed(2) || '0.00'}s
+                                {analytics?.system_metrics?.avg_response_time?.toFixed(1) || '0.0'} ثانیه
                             </div>
                             <div className="stat-change positive">
                                 <i className="fas fa-arrow-down"></i>
@@ -2618,9 +2733,12 @@
             // Messages state is lifted up to the App component and persisted via localStorage
             const [messages, setMessages] = useGlobalMessages();
 
+            // Conversation ID management - persist via localStorage
+            const [conversationId, setConversationId] = useLocalStorage('conversation_id', null);
+
             // WebSocket connection
             const { status: wsStatus, lastMessage, sendMessage: sendWsMessage } = useWebSocket(WS_URL, {
-                enabled: true,
+                enabled: false,
                 userId: 'guest'
             });
 
@@ -2713,6 +2831,8 @@
                                     wsStatus={wsStatus}
                                     sendWsMessage={sendWsMessage}
                                     lastMessage={lastMessage}
+                                    conversationId={conversationId}  // پاس دادن id به ChatPage
+                                    setConversationId={setConversationId}  // پاس دادن setter
                                 />
                             </div>
                         );
@@ -2748,6 +2868,8 @@
                                     wsStatus={wsStatus}
                                     sendWsMessage={sendWsMessage}
                                     lastMessage={lastMessage}
+                                    conversationId={conversationId}  // پاس دادن id به default هم
+                                    setConversationId={setConversationId}
                                 />
                             </div>
                         );

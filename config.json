@@ -1,5 +1,5 @@
 {
-  "openai_api_key": "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",
+  "openai_api_key": "",
   "primary_model": "gpt-4.1",
   "fast_model": "gpt-4.1-mini",
   "embedding_model": "text-embedding-3-large",
